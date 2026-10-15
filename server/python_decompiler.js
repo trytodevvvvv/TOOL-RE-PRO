@@ -437,7 +437,82 @@ pause\r
 `;
   fs.writeFileSync(path.join(outputDir, 'RUN_APP.bat'), runBatContent, 'utf8');
 
-  // 6. Tổng hợp Evidence Report
+  // 6. Tự động tạo tệp bộ công cụ Hook Nội Suy Động (Dynamic Runtime Hook Engine)
+  const hookEngineCode = `# =========================================================================
+# REA STUDIO - DYNAMIC RUNTIME HOOK & INTERCEPTION ENGINE (debug_hook_engine.py)
+# =========================================================================
+# File này cung cấp các công cụ Hook nội suy và phân tích động cho Python/Cython:
+# • trace_calls(target_obj, method_name): Log tham số & kết quả trả về của hàm C/Python trong RAM.
+# • monkey_patch(target_obj, attr_name, mock_value): Ghi đè hàm/lớp động trong bộ nhớ RAM.
+# • inspect_runtime_symbols(target): Quét thuộc tính/phương thức thực tế khi load vào RAM.
+# =========================================================================
+
+import sys
+import types
+import functools
+import logging
+
+logging.basicConfig(level=logging.INFO, format="[HOOK-ENGINE] %(asctime)s - %(message)s")
+
+def inspect_runtime_symbols(target):
+    """Quét và in ra toàn bộ thuộc tính, phương thức thực tế của object hoặc module khi nạp vào RAM"""
+    print(f"\\n{'='*70}\\n[INSPECT RUNTIME SYMBOLS] Target: {target}\\n{'='*70}")
+    attrs = dir(target)
+    for a in attrs:
+        if not a.startswith("__"):
+            val = getattr(target, a, None)
+            print(f"  • {a}: {type(val).__name__} -> {repr(val)[:80]}")
+    print(f"{'='*70}\\n")
+
+def trace_calls(target_obj, method_name):
+    """Theo dõi lời gọi hàm: Log tham số đầu vào, kết quả trả về và thời gian thực thi"""
+    orig_fn = getattr(target_obj, method_name, None)
+    if not orig_fn or not callable(orig_fn):
+        logging.warning(f"Không thể hook '{method_name}': Không tồn tại hoặc không thể gọi.")
+        return
+
+    @functools.wraps(orig_fn)
+    def wrapper(*args, **kwargs):
+        logging.info(f"==> CALLED: {getattr(target_obj, '__name__', type(target_obj).__name__)}.{method_name}")
+        logging.info(f"    Args: {args}")
+        logging.info(f"    Kwargs: {kwargs}")
+        try:
+            res = orig_fn(*args, **kwargs)
+            logging.info(f"<== RETURNED: {repr(res)[:120]}")
+            return res
+        except Exception as e:
+            logging.error(f"<== EXCEPTION in {method_name}: {e}")
+            raise
+
+    setattr(target_obj, method_name, wrapper)
+    logging.info(f"Đã kích hoạt Trace Hook cho: {method_name}")
+
+def monkey_patch(target_obj, attr_name, mock_implementation):
+    """Ghi đè nội suy hàm hoặc giá trị trong bộ nhớ RAM (In-Memory Hooking)"""
+    old_val = getattr(target_obj, attr_name, None)
+    setattr(target_obj, attr_name, mock_implementation)
+    logging.info(f"Đã nội suy (Monkey-Patch) thành công: {attr_name} (Gốc: {type(old_val).__name__})")
+`;
+  fs.writeFileSync(path.join(outputDir, 'debug_hook_engine.py'), hookEngineCode, 'utf8');
+
+  // 7. Tạo RUN_WITH_HOOK.bat
+  const runHookBatContent = `@echo off\r
+title REA Studio - Running App with Dynamic Hook Engine\r
+color 0b\r
+echo ================================================================\r
+echo   KHOI CHAY UNG DUNG PYTHON KEM BO HOOK NOI SUY DONG (HOOK ENGINE)\r
+echo   File chay chinh: ${mainRelName}\r
+echo ================================================================\r
+cd /d "%~dp0"\r
+${hasOriginalVenv ? `if exist "${originalVenvActivate}" (\r
+    echo [OK] Dang su dung moi truong venv goc: ${path.join(projectDir, 'venv')}\r
+    call "${originalVenvActivate}"\r
+)\r\n` : ''}python "${mainRelName}"\r
+pause\r
+`;
+  fs.writeFileSync(path.join(outputDir, 'RUN_WITH_HOOK.bat'), runHookBatContent, 'utf8');
+
+  // 8. Tổng hợp Evidence Report
   const allAuthSymbols = [];
   const allMainSymbols = [];
   for (const pa of pydAnalyses) {
@@ -448,6 +523,8 @@ pause\r
   const evidenceReport = `[THÀNH CÔNG] ĐÃ PHÂN TÍCH VÀ BUNG MÃ NGUỒN DỰ ÁN PYTHON NATIVE / CYTHON (.PYD)
 - Thư mục dự án: ${outputDir}
 - Điểm khởi chạy chính: ${mainRelName}
+- Bộ công cụ Hook nội suy: debug_hook_engine.py (đã tạo sẵn)
+- File chạy kèm Hook: RUN_WITH_HOOK.bat (đã tạo sẵn)
 - Tệp nhị phân Cython C-Extension (.pyd): ${pydAnalyses.length} tệp
 ${pydAnalyses.map(p => `  • ${p.file} (${(p.sizeBytes / 1024).toFixed(1)} KB)`).join('\n')}
 
@@ -472,19 +549,33 @@ CẤU TRÚC GIAO DIỆN CHÍNH & RUNNER TRÍCH XUẤT TỪ (.PYD):
 ${allMainSymbols.length > 0 ? [...new Set(allMainSymbols)].slice(0, 40).map(s => `  ⚡ ${s}`).join('\n') : '  (Chưa có symbol main)'}
 
 ================================================================================
-CHIẾN LƯỢC BYPASS BẢN QUYỀN BẰNG PYTHON MONKEY-PATCHING:
+HƯỚNG DẪN HOOK NỘI SUY ĐỘNG (DYNAMIC RUNTIME HOOKING):
 ================================================================================
-Vì file "${mainRelName}" là mã nguồn Python mở hoàn toàn, bạn KHÔNG CẦN phải dịch ngược
-mã máy C trong các tệp .pyd. Bạn chỉ cần chèn đoạn mã hook vào "${mainRelName}"
-trước khi gọi hàm khởi chạy ứng dụng:
-  1. Import module chứa lớp AuthScreen (ví dụ: import modules.app)
-  2. Ghi đè hàm kiểm tra hoặc boot (ví dụ: modules.app.AuthScreen.boot = lambda self: self.open_main())
-  3. Hoặc khởi chạy thẳng lớp MainApp (ví dụ: modules.app.MainApp())
+Bộ công cụ "debug_hook_engine.py" đã được tạo sẵn trong thư mục. Bạn có thể chèn
+đoạn code mẫu sau vào đầu file "${mainRelName}" trước khi gọi hàm run():
+
+\`\`\`python
+# [FILE: ${mainRelName}]
+import sys
+from debug_hook_engine import monkey_patch, trace_calls, inspect_runtime_symbols
+from modules.app_runner import run
+
+# 1. Quét hoặc theo dõi các hàm nhạy cảm khi load vào RAM:
+# import modules.app as app
+# inspect_runtime_symbols(app.AuthScreen)
+
+# 2. Hook nội suy hàm kiểm tra hoặc boot:
+# monkey_patch(app.AuthScreen, "boot", lambda self: print("[HOOK] Bỏ qua kiểm tra thành công!"))
+
+if __name__ == "__main__":
+    sys.exit(run())
+\`\`\`
 `;
 
   fs.writeFileSync(path.join(outputDir, 'python_cython_evidence.json'), JSON.stringify({
     projectType: 'Python Native / Cython C-Extension (.pyd)',
     entryPoint: mainRelName,
+    hookEngine: 'debug_hook_engine.py',
     pydFiles: pydAnalyses,
     requirements: requirementsContent,
     authSymbols: [...new Set(allAuthSymbols)],
