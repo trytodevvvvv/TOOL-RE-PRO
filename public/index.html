@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>REA Studio - Desktop Decompiler</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <!-- MONACO EDITOR (VS CODE & DNSPY CORE) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.min.js"></script>
+</head>
+<body>
+  <div class="studio-wrapper">
+    <!-- TOP TOOLBAR -->
+    <header class="studio-header">
+      <div class="header-left">
+        <div class="brand-logo">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <polyline points="16 18 22 12 16 6"></polyline>
+            <polyline points="8 6 2 12 8 18"></polyline>
+            <circle cx="12" cy="12" r="2"></circle>
+          </svg>
+        </div>
+        <div class="brand-title">
+          <h1>REA STUDIO <span>DESKTOP APP</span></h1>
+        </div>
+      </div>
+
+      <!-- THANH CHỌN FILE VÀ NÚT BUNG SOURCE CODE -->
+      <div class="header-center">
+        <div class="target-input-bar">
+          <span class="target-icon">🎯</span>
+          <input type="text" id="target-file-input" placeholder="Chọn tệp hoặc dán đường dẫn (EXE, Python Tool, ASAR, PYC, JS, APK)..." spellcheck="false">
+          <button class="btn-browse" onclick="browseTargetFile()" title="Mở hộp thoại chọn tệp">
+            <span>📄 Chọn Tệp</span>
+          </button>
+          <button class="btn-browse" onclick="browseTargetFolder()" title="Mở hộp thoại chọn thư mục">
+            <span>📁 Chọn Thư Mục</span>
+          </button>
+          <button class="btn btn-action" id="btn-auto-decompile" onclick="startAutoDecompile()">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <polygon points="5 3 19 12 5 21 5 3"></polygon>
+            </svg>
+            <span>DỊCH NGƯỢC &amp; BUNG SOURCE CODE</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- TRẠNG THÁI & NÚT MỞ THƯ MỤC -->
+      <div class="header-right">
+        <button class="btn btn-copilot-toggle active" id="btn-toggle-copilot" onclick="toggleCopilotPanel()" title="Ẩn / Hiện khung Chatbot AI DeepSeek-R1">
+          <span>🧠 Chatbot AI</span>
+        </button>
+        <button class="btn btn-open-project" id="btn-open-existing-project" onclick="openExistingProjectDialog()" title="Mở lại thư mục dự án đã bung trước đó (Ctrl + O)">
+          <span>📂 Mở Dự Án Đã Bung</span>
+        </button>
+        <button class="btn btn-run-app hidden" id="btn-header-run-app" onclick="runLiveApp()" title="Khởi chạy ứng dụng trực tiếp từ mã nguồn">
+          <span>🚀 Chạy Ứng Dụng</span>
+        </button>
+        <button class="btn btn-open-folder hidden" id="btn-open-source-dir" onclick="openOutputDirectory()">
+          <span>📂 Mở Thư Mục Mã Nguồn</span>
+        </button>
+        <button class="status-btn" onclick="openColabModal()">
+          <span class="status-dot offline" id="colab-dot"></span>
+          <span id="colab-status-text">Kết nối Colab T4</span>
+          <span class="gear-icon">⚙️</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- THANH HIỂN THỊ ĐƯỜNG DẪN THƯ MỤC ĐÍCH -->
+    <div class="output-path-banner" id="output-path-banner">
+      <div class="banner-content">
+        <span class="banner-label">📁 Thư mục lưu mã nguồn xuất ra:</span>
+        <span class="banner-path" id="display-output-path">Chưa dịch ngược. Khi bấm nút, mã nguồn sẽ tự động bung ra tại đây.</span>
+        <button class="btn-browse-sm" onclick="browseOutputDir()" title="Chọn thư mục khác trên máy tính">
+          <span>🔄 Thay Đổi Thư Mục Lưu</span>
+        </button>
+        <button class="btn-sm-text hidden" id="banner-btn-open" onclick="openOutputDirectory()">Mở trong Explorer</button>
+      </div>
+    </div>
+
+    <!-- THANH TIẾN TRÌNH DỊCH NGƯỢC (PROGRESS BAR) -->
+    <div class="progress-bar-container hidden" id="decompile-progress-container">
+      <div class="progress-header">
+        <span class="progress-step-text" id="progress-step-text">
+          <span class="progress-spinner">⏳</span> <span id="progress-step-label">Đang chuẩn bị...</span>
+        </span>
+        <span class="progress-percent" id="progress-percent">0%</span>
+      </div>
+      <div class="progress-track">
+        <div class="progress-fill" id="progress-fill"></div>
+      </div>
+    </div>
+
+    <!-- 3-PANE WORKSPACE -->
+    <div class="studio-main">
+      <!-- CỘT 1: DANH SÁCH CÁC TỆP ĐÃ BUNG RA (EXTRACTED FILE TREE) -->
+      <aside class="panel-explorer">
+        <div class="panel-header">
+          <span class="panel-title">MÃ NGUỒN ĐÃ BUNG RA</span>
+          <span class="badge" id="target-type-badge">Chờ tệp</span>
+        </div>
+
+        <div class="explorer-content">
+          <div class="file-summary-card" id="file-summary-card">
+            <div class="summary-empty">
+              <span>Chưa nạp tệp nào.<br>Dán đường dẫn tệp vào thanh trên và bấm <b>[Dịch Ngược &amp; Bung Source Code]</b>!</span>
+            </div>
+          </div>
+
+          <div class="explorer-section">
+            <div class="section-heading">CÂY THƯ MỤC MÃ NGUỒN (CLICK ĐỂ MỞ)</div>
+            <div class="tree-container" id="extracted-tree-container">
+              <div class="item-placeholder">Các tệp mã nguồn (.js, .html, .py, .c, .json) được bung ra sẽ hiển thị tại đây...</div>
+            </div>
+          </div>
+
+          <div class="explorer-section recent-section" id="recent-projects-section">
+            <div class="section-heading" style="display:flex; justify-content:space-between; align-items:center;">
+              <span>🕒 DỰ ÁN ĐÃ BUNG GẦN ĐÂY</span>
+              <button class="btn-xs-action" onclick="openExistingProjectDialog()" title="Mở thư mục dự án khác">+ Mở</button>
+            </div>
+            <div class="recent-list" id="recent-projects-list">
+              <div class="item-placeholder">Chưa có dự án nào gần đây...</div>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- CỘT 2: CODE & EVIDENCE VIEWER (DNSPY STYLE MULTI-TAB & LIVE EDITOR) -->
+      <section class="panel-viewer">
+        <!-- DNSPY TABS & ACTION TOOLBAR -->
+        <div class="editor-header-bar">
+          <div class="editor-tabs-scroll" id="editor-tabs-list">
+            <!-- Fixed default tabs -->
+            <div class="e-tab active" id="tab-system-evidence" onclick="selectSystemTab('evidence')">
+              <span class="tab-icon">📋</span>
+              <span class="tab-title">Báo Cáo Evidence</span>
+            </div>
+            <div class="e-tab" id="tab-system-ai" onclick="selectSystemTab('ai')">
+              <span class="tab-icon">⚡</span>
+              <span class="tab-title">Mã Nguồn Tái Tạo (AI)</span>
+            </div>
+            <!-- Dynamic file tabs opened from file tree will be added here -->
+          </div>
+
+          <div class="editor-quick-actions">
+            <button class="btn-editor-action btn-run-live" id="btn-editor-run" title="Khởi chạy ứng dụng trực tiếp với mã nguồn vừa sửa" onclick="runLiveApp()">
+              <span>🚀 Chạy Ứng Dụng</span>
+            </button>
+            <button class="btn-editor-action btn-save-code" id="btn-editor-save" title="Lưu thay đổi xuống ổ đĩa (Ctrl + S)" onclick="saveActiveEditorFile()">
+              <span>💾 Lưu (Ctrl+S)</span>
+            </button>
+            <button class="btn-editor-action" id="btn-editor-format" title="Format làm đẹp mã nguồn" onclick="formatActiveEditorCode()">
+              <span>🧹 Format</span>
+            </button>
+            <button class="btn-editor-action btn-repack-asar" id="btn-editor-repack" title="Đóng gói lại toàn bộ thư mục thành file ASAR mới (dnSpy Save Module)" onclick="repackCurrentAsar()">
+              <span>📦 Đóng Gói Lại (ASAR)</span>
+            </button>
+            <button class="btn-editor-action" title="Sao chép toàn bộ nội dung" onclick="copyViewerContent()">
+              <span>📋 Copy</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- DNSPY BREADCRUMBS BAR -->
+        <div class="editor-breadcrumbs-bar" id="editor-breadcrumbs-bar">
+          <div class="breadcrumb-path" id="breadcrumb-path">
+            <span class="bc-item">📁 DECOMPILED_OUTPUT</span>
+            <span class="bc-sep">/</span>
+            <span class="bc-item current" id="breadcrumb-current-file">Báo Cáo Evidence</span>
+          </div>
+          <div class="breadcrumb-meta" id="breadcrumb-dirty-badge">
+            <span class="status-clean" id="editor-clean-status">✓ Đã lưu</span>
+          </div>
+        </div>
+
+        <!-- MONACO EDITOR CONTAINER -->
+        <div class="viewer-body">
+          <div id="monaco-editor-container" class="monaco-container"></div>
+          <pre id="code-display" class="code-editor hidden"><code>// Đang khởi tạo Monaco Editor...</code></pre>
+        </div>
+
+        <!-- DNSPY STATUS BAR -->
+        <div class="editor-status-bar" id="editor-status-bar">
+          <div class="status-left">
+            <span id="sb-cursor-pos">Ln 1, Col 1</span>
+            <span class="sb-sep">|</span>
+            <span id="sb-char-count">0 ký tự</span>
+          </div>
+          <div class="status-right">
+            <span id="sb-encoding">UTF-8</span>
+            <span class="sb-sep">|</span>
+            <span id="sb-language">JavaScript</span>
+            <span class="sb-sep">|</span>
+            <span id="sb-edit-mode">🟢 Sửa trực tiếp (dnSpy Mode)</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- THANH KÉO CO GIÃN ĐỘ RỘNG COPILOT CHATBOT -->
+      <div class="panel-resizer" id="copilot-resizer" title="Kéo chuột sang trái/phải để mở rộng hoặc thu hẹp khung Chatbot"></div>
+
+      <!-- CỘT 3: AI DECOMPILER COPILOT -->
+      <aside class="panel-copilot">
+        <div class="panel-header">
+          <div class="copilot-title">
+            <span class="ai-sparkle">🧠</span>
+            <span>DEEPSEEK-R1 COPILOT</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:6px;">
+            <span class="model-badge">14B (T4 GPU)</span>
+            <button onclick="toggleCopilotPanel()" title="Thu gọn panel Chatbot" style="background:none; border:none; color:var(--text-dim); cursor:pointer; font-size:13px; padding:2px 5px; border-radius:3px;">✕</button>
+          </div>
+        </div>
+
+        <div class="copilot-quick-bar">
+          <button class="quick-chip" onclick="askAiQuick('Hãy tóm tắt luồng hoạt động chính và kiến trúc của file này.')">🔍 Kiến trúc</button>
+          <button class="quick-chip" onclick="askAiQuick('Tìm toàn bộ chuỗi nhạy cảm, API Keys, URLs hoặc cơ chế kiểm tra License.')">🔑 API &amp; Key</button>
+          <button class="quick-chip" onclick="askAiQuick('Tái tạo lại logic thuật toán này sang mã nguồn Python hoàn chỉnh có chú thích tiếng Việt.')">🐍 Tái tạo Python</button>
+        </div>
+
+        <div class="copilot-chat" id="copilot-chat-box">
+          <div class="c-msg c-msg-ai">
+            <div class="c-msg-avatar">🤖</div>
+            <div class="c-msg-bubble">
+              <p>Chào bạn! Tôi là <b>DeepSeek-R1-14B</b> chạy trên Google Colab GPU.</p>
+              <p>Khi bạn bấm <b>Dịch Ngược</b>, toàn bộ mã nguồn sẽ tự động bung ra ổ đĩa máy tính, và tôi sẽ phân tích các hàm quan trọng để bạn hiểu toàn bộ logic!</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="copilot-input-area">
+          <textarea id="copilot-user-input" placeholder="Hỏi AI về mã nguồn, yêu cầu giải thích hàm, viết lại code..." rows="2"></textarea>
+          <button class="btn btn-primary" id="btn-send-copilot" onclick="sendCopilotMessage()">
+            <span>Gửi</span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="22" y1="2" x2="11" y2="13"></line>
+              <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+            </svg>
+          </button>
+        </div>
+      </aside>
+    </div>
+
+    <!-- MODAL CẤU HÌNH COLAB -->
+    <div id="colab-modal" class="modal-overlay hidden">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h3>⚙️ Cấu Hình Kết Nối Colab GPU (DeepSeek-R1)</h3>
+          <button class="btn-close" onclick="closeColabModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label>Cloudflare Public URL (Từ tab Google Colab):</label>
+            <div class="input-with-button">
+              <input type="text" id="modal-colab-url" placeholder="https://xxxx-xxxx.trycloudflare.com">
+              <button class="btn btn-primary" id="btn-modal-test" onclick="modalTestColab()">
+                <span id="modal-btn-text">Kết Nối</span>
+              </button>
+            </div>
+          </div>
+          <div id="modal-test-status" class="test-result-box hidden"></div>
+
+          <div style="margin: 14px 0 10px 0; display: flex; gap: 8px;">
+            <button class="btn btn-action" style="flex: 1; justify-content: center; padding: 9px;" onclick="copyColabScript()">
+              <span>📋 SAO CHÉP TOÀN BỘ MÃ CHẠY COLAB (1-CLICK)</span>
+            </button>
+          </div>
+
+          <div class="colab-quick-guide">
+            <p><b>Cách chạy Google Colab cực nhanh:</b></p>
+            <ol>
+              <li>Bấm nút <b>[📋 SAO CHÉP TOÀN BỘ MÃ CHẠY COLAB]</b> ở trên.</li>
+              <li>Truy cập <a href="https://colab.research.google.com" target="_blank" style="color: var(--primary); text-decoration: underline;">colab.research.google.com</a>, tạo <b>Sổ tay mới (New Notebook)</b>.</li>
+              <li>Vào <b>Runtime &gt; Change runtime type &gt; Chọn T4 GPU &gt; Save</b>.</li>
+              <li>Dán mã vừa sao chép vào ô đầu tiên và bấm nút <b>Play ▶</b> (chờ 1-2 phút).</li>
+              <li>Sao chép link có đuôi <b>.trycloudflare.com</b> ở dòng thông báo cuối dán vào ô trên và bấm <b>[Kết Nối]</b>!</li>
+            </ol>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

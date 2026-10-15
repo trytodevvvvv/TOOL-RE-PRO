@@ -1,0 +1,27 @@
+# Node.js dependencies
+node_modules/
+
+# Output directory for decompiled files (exclude all extracted apps, keep folder)
+DECOMPILED_OUTPUT/*
+!DECOMPILED_OUTPUT/.gitkeep
+
+# Logs and runtime dumps
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Windows / OS specific
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+
+# Editor / IDE configuration
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

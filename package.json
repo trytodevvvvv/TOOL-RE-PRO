@@ -1,0 +1,16 @@
+{
+  "name": "rea-decompiler-studio",
+  "version": "1.0.0",
+  "description": "Visual UI Studio for REA Decompiler powered by DeepSeek-R1-14B on Colab GPU",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js"
+  },
+  "dependencies": {
+    "@electron/asar": "^4.3.1",
+    "asar": "^3.2.0",
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "node-fetch": "^3.3.2"
+  }
+}
