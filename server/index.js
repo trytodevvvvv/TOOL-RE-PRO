@@ -1220,19 +1220,32 @@ app.post('/api/agent/search-code', (req, res) => {
 
 // 5.2 API Agent Tự động áp dụng code đã sửa vào file (Apply Patch / Edit File)
 app.post('/api/agent/apply-code', async (req, res) => {
-  const { folderPath, targetFile, content } = req.body;
-  if (!folderPath || !targetFile || content === undefined) {
+  const folderPath = req.body.folderPath || req.body.outputDir;
+  const targetFile = req.body.targetFile || req.body.filePath;
+  const content = req.body.content !== undefined ? req.body.content : req.body.code;
+
+  if (!targetFile || content === undefined) {
     return res.status(400).json({ success: false, error: 'Thiếu thông tin file hoặc nội dung' });
   }
 
   try {
-    let resolvedPath = path.isAbsolute(targetFile) ? targetFile : path.join(folderPath, targetFile);
+    let resolvedPath = targetFile;
+    if (!path.isAbsolute(targetFile)) {
+      if (folderPath) {
+        resolvedPath = path.join(folderPath, targetFile);
+      } else {
+        return res.status(400).json({ success: false, error: 'Chưa xác định được thư mục dự án!' });
+      }
+    }
+
     // Nếu file chưa trỏ vào resources/app nhưng project có resources/app
-    const liveApp = path.join(folderPath, 'resources', 'app');
-    if (!fs.existsSync(resolvedPath) && fs.existsSync(liveApp)) {
-      const candidate = path.join(liveApp, targetFile);
-      if (fs.existsSync(candidate) || fs.existsSync(path.dirname(candidate))) {
-        resolvedPath = candidate;
+    if (folderPath) {
+      const liveApp = path.join(folderPath, 'resources', 'app');
+      if (!fs.existsSync(resolvedPath) && fs.existsSync(liveApp)) {
+        const candidate = path.join(liveApp, targetFile);
+        if (fs.existsSync(candidate) || fs.existsSync(path.dirname(candidate))) {
+          resolvedPath = candidate;
+        }
       }
     }
 
@@ -1241,8 +1254,9 @@ app.post('/api/agent/apply-code', async (req, res) => {
       fs.mkdirSync(parent, { recursive: true });
     }
 
+    // GHI ĐÈ VÀ LƯU THẲNG XUỐNG Ổ CỨNG
     fs.writeFileSync(resolvedPath, content, 'utf8');
-    console.log(`[AGENT] Đã áp dụng mã nguồn tự động vào: ${resolvedPath}`);
+    console.log(`[AGENT] Đã lưu code tự động vĩnh viễn vào file: ${resolvedPath}`);
 
     // Tự động đồng bộ Live App nếu nằm trong resources/app
     let syncedAsar = false;
@@ -1258,10 +1272,12 @@ app.post('/api/agent/apply-code', async (req, res) => {
       syncedAsar = true;
     }
 
+    const relFile = folderPath ? path.relative(folderPath, resolvedPath).replace(/\\/g, '/') : path.basename(resolvedPath);
+
     res.json({
       success: true,
-      appliedFile: resolvedPath,
-      relativeFile: path.relative(folderPath, resolvedPath).replace(/\\/g, '/'),
+      fullPath: resolvedPath,
+      relativePath: relFile,
       size: Buffer.byteLength(content, 'utf8'),
       syncedAsar
     });

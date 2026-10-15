@@ -1458,7 +1458,7 @@ async function applyAiCodeFromStore(blockKey) {
   const originalHtml = btn ? btn.innerHTML : '';
   if (btn) {
     btn.disabled = true;
-    btn.innerHTML = '<span>⏳ Đang áp dụng...</span>';
+    btn.innerHTML = '<span>⏳ Đang áp dụng & lưu...</span>';
   }
 
   try {
@@ -1466,34 +1466,53 @@ async function applyAiCodeFromStore(blockKey) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        filePath: item.filePath,
-        code: item.code
+        folderPath: currentOutputDir,
+        targetFile: item.filePath,
+        content: item.code
       })
     });
     const data = await res.json();
     if (data.success) {
       if (btn) {
-        btn.innerHTML = '<span>✅ Đã Áp Dụng!</span>';
+        btn.innerHTML = '<span>✅ Đã Áp Dụng & Lưu!</span>';
         btn.style.background = '#238636';
       }
-      showToast(`⚡ Đã tự động cập nhật ${data.relativePath}!`);
+      showToast(`⚡ Đã tự động lưu vĩnh viễn: ${data.relativePath}!`);
 
-      // Nếu file này đang mở trong Monaco Editor thì cập nhật nội dung tức thì
+      // 1. Kiểm tra xem file đã mở trong tab nào chưa
+      let matchedTabKey = null;
       for (const [key, tab] of editorTabs.entries()) {
-        if (tab.filePath && (tab.filePath === data.fullPath || tab.filePath.replace(/\\/g, '/').endsWith(data.relativePath.replace(/\\/g, '/')))) {
-          tab.content = item.code;
-          tab.savedContent = item.code;
-          tab.isDirty = false;
-          if (activeTabKey === key && monacoEditor) {
-            monacoEditor.setValue(item.code);
+        if (!tab.isSystem && tab.filePath) {
+          const normTab = tab.filePath.replace(/\\/g, '/').toLowerCase();
+          const normFull = data.fullPath ? data.fullPath.replace(/\\/g, '/').toLowerCase() : '';
+          const normRel = data.relativePath ? data.relativePath.replace(/\\/g, '/').toLowerCase() : '';
+          const targetRel = item.filePath.replace(/\\/g, '/').toLowerCase();
+          if (normTab === normFull || normTab.endsWith(normRel) || normTab.endsWith(targetRel) || tab.title.toLowerCase() === targetRel) {
+            matchedTabKey = key;
+            break;
           }
-          renderEditorTabs();
-          break;
         }
       }
 
+      if (matchedTabKey) {
+        const tab = editorTabs.get(matchedTabKey);
+        tab.content = item.code;
+        tab.savedContent = item.code;
+        tab.isDirty = false;
+        if (activeTabKey === matchedTabKey && monacoEditor) {
+          monacoEditor.setValue(item.code);
+        } else {
+          switchEditorTab(matchedTabKey);
+        }
+        renderTabsList();
+      } else if (data.fullPath) {
+        // Nếu file chưa mở trên tab, tự động mở luôn tab mới cho file này để người dùng thấy ngay
+        const fileName = item.filePath.split(/[\\/]/).pop();
+        await openFileInEditor(data.fullPath, fileName);
+      }
+
       const asarMsg = data.asarSynced ? '\n📦 Đã tự động cập nhật đồng bộ trực tiếp vào file app.asar!' : '';
-      alert(`🎉 [THÀNH CÔNG] ĐÃ ÁP DỤNG CODE THÀNH CÔNG!\n\n📄 File: ${data.relativePath}${asarMsg}\n\nBạn có thể chạy thử phần mềm hoặc tiếp tục chỉnh sửa.`);
+      alert(`🎉 [THÀNH CÔNG] ĐÃ TỰ ĐỘNG ÁP DỤNG & LƯU CODE!\n\n📄 File: ${data.relativePath}\n📁 Đường dẫn: ${data.fullPath}${asarMsg}\n\nCode đã được ghi thẳng xuống ổ đĩa và cập nhật ngay trên editor!`);
     } else {
       if (btn) btn.innerHTML = originalHtml;
       alert(`❌ Lỗi khi áp dụng code: ${data.error}`);
