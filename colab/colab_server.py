@@ -48,7 +48,8 @@ print("--> [3/4] Đang nạp Model vào GPU T4 với Ollama...")
 with open("Modelfile", "w") as f:
     f.write(f"""FROM {MODEL_PATH}
 PARAMETER temperature 0.6
-PARAMETER num_ctx 16384
+PARAMETER num_ctx 32768
+PARAMETER num_batch 512
 """)
 !ollama create deepseek-r1-distill-qwen-14b -f Modelfile
 

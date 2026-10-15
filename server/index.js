@@ -1146,9 +1146,118 @@ app.post('/api/project/save-ai-code', (req, res) => {
   }
 });
 
+// 5.1 API Agent Tìm kiếm chuỗi/mã nguồn trong toàn bộ dự án
+app.post('/api/agent/search-code', (req, res) => {
+  const { folderPath, query, maxResults = 30 } = req.body;
+  if (!folderPath || !query || !fs.existsSync(folderPath)) {
+    return res.status(400).json({ success: false, error: 'Thiếu đường dẫn hoặc từ khóa tìm kiếm' });
+  }
+
+  let searchDir = folderPath;
+  const liveApp = path.join(folderPath, 'resources', 'app');
+  if (fs.existsSync(liveApp)) {
+    searchDir = liveApp;
+  }
+
+  const matches = [];
+  const validExts = new Set(['.js', '.mjs', '.cjs', '.ts', '.tsx', '.json', '.html', '.css', '.py', '.c', '.h', '.txt', '.bat']);
+  const lowerQuery = query.toLowerCase();
+
+  function scan(dir, depth = 0) {
+    if (depth > 7 || matches.length >= maxResults) return;
+    try {
+      const items = fs.readdirSync(dir);
+      for (const item of items) {
+        if (matches.length >= maxResults) break;
+        if (item === 'node_modules' || item === 'locales' || item === 'bin' || item.startsWith('.')) continue;
+
+        const full = path.join(dir, item);
+        const stat = fs.statSync(full);
+        if (stat.isDirectory()) {
+          scan(full, depth + 1);
+        } else if (validExts.has(path.extname(item).toLowerCase()) && stat.size < 1024 * 1024 * 3) {
+          try {
+            const content = fs.readFileSync(full, 'utf8');
+            if (content.toLowerCase().includes(lowerQuery)) {
+              const lines = content.split('\n');
+              for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
+                if (matches.length >= maxResults) break;
+                if (lines[lineIdx].toLowerCase().includes(lowerQuery)) {
+                  matches.push({
+                    file: path.relative(folderPath, full).replace(/\\/g, '/'),
+                    fullPath: full,
+                    line: lineIdx + 1,
+                    snippet: lines[lineIdx].trim().slice(0, 180)
+                  });
+                }
+              }
+            }
+          } catch (e) {}
+        }
+      }
+    } catch (e) {}
+  }
+
+  scan(searchDir);
+  res.json({ success: true, query, totalMatches: matches.length, matches });
+});
+
+// 5.2 API Agent Tự động áp dụng code đã sửa vào file (Apply Patch / Edit File)
+app.post('/api/agent/apply-code', async (req, res) => {
+  const { folderPath, targetFile, content } = req.body;
+  if (!folderPath || !targetFile || content === undefined) {
+    return res.status(400).json({ success: false, error: 'Thiếu thông tin file hoặc nội dung' });
+  }
+
+  try {
+    let resolvedPath = path.isAbsolute(targetFile) ? targetFile : path.join(folderPath, targetFile);
+    // Nếu file chưa trỏ vào resources/app nhưng project có resources/app
+    const liveApp = path.join(folderPath, 'resources', 'app');
+    if (!fs.existsSync(resolvedPath) && fs.existsSync(liveApp)) {
+      const candidate = path.join(liveApp, targetFile);
+      if (fs.existsSync(candidate) || fs.existsSync(path.dirname(candidate))) {
+        resolvedPath = candidate;
+      }
+    }
+
+    const parent = path.dirname(resolvedPath);
+    if (!fs.existsSync(parent)) {
+      fs.mkdirSync(parent, { recursive: true });
+    }
+
+    fs.writeFileSync(resolvedPath, content, 'utf8');
+    console.log(`[AGENT] Đã áp dụng mã nguồn tự động vào: ${resolvedPath}`);
+
+    // Tự động đồng bộ Live App nếu nằm trong resources/app
+    let syncedAsar = false;
+    const normalized = resolvedPath.replace(/\\/g, '/');
+    const appIdx = normalized.indexOf('/resources/app/');
+    if (appIdx !== -1 && asar && typeof asar.createPackage === 'function') {
+      const projectRoot = resolvedPath.substring(0, appIdx);
+      const appDir = path.join(projectRoot, 'resources', 'app');
+      const targetAsar = path.join(projectRoot, 'resources', 'app.asar');
+      asar.createPackage(appDir, targetAsar).then(() => {
+        console.log(`[AUTO-SYNC] Đã đồng bộ tức thì sau khi Agent sửa: ${targetAsar}`);
+      }).catch(e => {});
+      syncedAsar = true;
+    }
+
+    res.json({
+      success: true,
+      appliedFile: resolvedPath,
+      relativeFile: path.relative(folderPath, resolvedPath).replace(/\\/g, '/'),
+      size: Buffer.byteLength(content, 'utf8'),
+      syncedAsar
+    });
+  } catch (err) {
+    console.error('Lỗi Agent apply code:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // 6. API Chat / Suy luận với DeepSeek-R1 (HỖ TRỢ STREAMING SSE CHỐNG TIMEOUT 524)
 app.post('/api/chat', async (req, res) => {
-  const { messages, contextEvidence } = req.body;
+  const { messages, contextEvidence, projectInfo } = req.body;
   const colabUrl = currentConfig.colabUrl;
 
   if (!colabUrl) {
@@ -1157,14 +1266,29 @@ app.post('/api/chat', async (req, res) => {
 
   const endpoint = `${colabUrl.replace(/\/+$/, '')}/v1/chat/completions`;
 
-  let systemPrompt = `Bạn là Trợ lý Dịch Ngược và Tái Tạo Mã Nguồn (Reverse Engineering Agent) chuyên nghiệp trong REA Studio.
+  let systemPrompt = `Bạn là Trợ lý Dịch Ngược & Kỹ sư Lập trình Cấp cao (Autonomous Reverse Engineering Agent) trong REA Studio.
 Nhiệm vụ của bạn:
 1. Phân tích cấu trúc và logic từ tệp nhị phân, JavaScript, Electron, Python hoặc Assembly vừa được bung ra.
-2. Tìm kiếm các thuật toán mã hóa, chuỗi bí mật, logic kiểm tra bản quyền / API.
-3. Luôn suy nghĩ kỹ trong thẻ <think>, sau đó viết lại mã nguồn tái tạo hoàn chỉnh (bằng Python, C++ hoặc JavaScript sạch có chú thích tiếng Việt).`;
+2. Tìm kiếm các thuật toán mã hóa, chuỗi bí mật, logic kiểm tra bản quyền / API / License.
+3. Khi bạn muốn sửa code hoặc tạo file mới trong dự án, bạn PHẢI luôn đặt đường dẫn file ở DÒNG ĐẦU TIÊN của khối code với cú pháp:
+\`\`\`javascript
+// [FILE: đường_dẫn_tệp]
+... nội dung mã nguồn hoàn chỉnh hoặc đoạn code đã vá ...
+\`\`\`
+Ví dụ:
+\`\`\`javascript
+// [FILE: dist/main.js]
+// Đã bypass kiểm tra bản quyền
+...
+\`\`\`
+Hệ thống REA Studio sẽ tự động tạo nút "⚡ ÁP DỤNG VÀO FILE" để người dùng áp dụng code thẳng vào ổ đĩa và tự động đồng bộ vào ứng dụng!`;
+
+  if (projectInfo) {
+    systemPrompt += `\n\n[DỰ ÁN ĐANG MỞ]: ${projectInfo.name || 'Project'} (${projectInfo.path || ''})\n[DANH SÁCH FILE CHÍNH]: ${projectInfo.files || 'dist/main.js, package.json'}`;
+  }
 
   if (contextEvidence) {
-    systemPrompt += `\n\n[DỮ LIỆU BÓC TÁCH]:\n${contextEvidence.slice(0, 4000)}`;
+    systemPrompt += `\n\n[DỮ LIỆU BÓC TÁCH]:\n${contextEvidence.slice(0, 4500)}`;
   }
 
   const fullMessages = [

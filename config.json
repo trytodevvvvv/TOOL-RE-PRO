@@ -2,5 +2,18 @@
   "modelId": "deepseek-r1-distill-qwen-14b",
   "temperature": 0.6,
   "maxTokens": 4096,
-  "recentProjects": []
+  "recentProjects": [
+    {
+      "name": "TEST",
+      "path": "D:\\TEST",
+      "fileType": "Dự án đã bung",
+      "lastOpened": "2026-10-15T12:34:31.570Z"
+    },
+    {
+      "name": "TEST DECOMPILER",
+      "path": "D:\\TEST DECOMPILER",
+      "fileType": "Ứng dụng Desktop (Electron Live Unpack)",
+      "lastOpened": "2026-10-15T11:27:09.371Z"
+    }
+  ]
 }

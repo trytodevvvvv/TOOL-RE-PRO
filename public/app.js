@@ -40,6 +40,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initStudio();
   initPanelResizer();
   initChatScrollWatcher();
+  initImagePasteWatcher();
 
   const chatInput = document.getElementById('copilot-user-input');
   if (chatInput) {
@@ -1149,12 +1150,14 @@ window.addEventListener('keydown', (e) => {
 
 async function streamCopilotChat(messages, contextEvidence, onChunk, onDone, onError) {
   try {
+    const isAgent = document.getElementById('chk-agent-mode')?.checked ?? true;
     const res = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         messages,
-        contextEvidence: contextEvidence ? contextEvidence.slice(0, 3000) : ''
+        contextEvidence: contextEvidence ? contextEvidence.slice(0, 3500) : '',
+        agentMode: isAgent
       })
     });
 
@@ -1275,27 +1278,133 @@ function initPanelResizer() {
   });
 }
 
-// Chat Copilot (Streaming)
+// =========================================================================
+// IMAGE ATTACHMENT & TESSERACT OCR (SCREENSHOT PASTE CTRL+V)
+// =========================================================================
+let currentAttachedImage = null;
+
+function initImagePasteWatcher() {
+  window.addEventListener('paste', (e) => {
+    const items = (e.clipboardData || e.originalEvent?.clipboardData)?.items;
+    if (!items) return;
+
+    for (const item of items) {
+      if (item.type.indexOf('image') !== -1) {
+        const file = item.getAsFile();
+        if (file) {
+          handleImageFile(file);
+          const panel = document.querySelector('.panel-copilot');
+          if (panel && panel.classList.contains('collapsed')) {
+            toggleCopilotPanel();
+          }
+          break;
+        }
+      }
+    }
+  });
+}
+
+function triggerImagePicker() {
+  const input = document.getElementById('chat-file-input');
+  if (input) input.click();
+}
+
+function handleImagePicked(event) {
+  const file = event.target.files?.[0];
+  if (file) {
+    handleImageFile(file);
+  }
+}
+
+function handleImageFile(file) {
+  const reader = new FileReader();
+  reader.onload = async (e) => {
+    const dataUrl = e.target.result;
+    const previewBar = document.getElementById('chat-image-preview-bar');
+    const previewImg = document.getElementById('chat-img-preview');
+    const ocrTextEl = document.getElementById('img-ocr-text');
+
+    if (previewImg) previewImg.src = dataUrl;
+    if (previewBar) previewBar.classList.remove('hidden');
+
+    currentAttachedImage = {
+      file,
+      dataUrl,
+      ocrText: '',
+      isOcrDone: false
+    };
+
+    if (ocrTextEl) ocrTextEl.textContent = 'Đang nhận diện chữ & lỗi từ ảnh...';
+
+    try {
+      if (window.Tesseract) {
+        const result = await Tesseract.recognize(file, 'eng');
+        const text = result?.data?.text?.trim() || '';
+        currentAttachedImage.ocrText = text;
+        currentAttachedImage.isOcrDone = true;
+        if (ocrTextEl) {
+          ocrTextEl.textContent = text 
+            ? `Đã nhận diện: "${text.slice(0, 40)}..."` 
+            : 'Đã tải ảnh xong (Không phát hiện chữ)';
+        }
+      } else {
+        currentAttachedImage.isOcrDone = true;
+        if (ocrTextEl) ocrTextEl.textContent = 'Ảnh đã sẵn sàng gửi';
+      }
+    } catch (err) {
+      console.warn('Lỗi OCR Tesseract:', err);
+      currentAttachedImage.isOcrDone = true;
+      if (ocrTextEl) ocrTextEl.textContent = 'Ảnh đã sẵn sàng gửi';
+    }
+  };
+  reader.readAsDataURL(file);
+}
+
+function clearAttachedImage() {
+  currentAttachedImage = null;
+  const previewBar = document.getElementById('chat-image-preview-bar');
+  const previewImg = document.getElementById('chat-img-preview');
+  const fileInput = document.getElementById('chat-file-input');
+  if (previewBar) previewBar.classList.add('hidden');
+  if (previewImg) previewImg.src = '';
+  if (fileInput) fileInput.value = '';
+}
+
+// =========================================================================
+// COPILOT AI CHAT & CODING AGENT
+// =========================================================================
+
 async function sendCopilotMessage() {
   const inputEl = document.getElementById('copilot-user-input');
   const text = inputEl.value.trim();
-  if (!text) return;
+  const attached = currentAttachedImage;
 
-  appendCopilotMessage('user', text);
+  if (!text && !attached) return;
+
+  const displayText = text || '*(Gửi kèm ảnh chụp màn hình/lỗi)*';
+  const imgUrl = attached ? attached.dataUrl : null;
+  appendCopilotMessage('user', displayText, imgUrl);
   inputEl.value = '';
 
-  userScrolledUp = false; // Người dùng vừa gửi tin mới -> cho phép tự động cuộn xuống dưới cùng
+  userScrolledUp = false;
   scrollCopilotBottom(true);
 
-  copilotChatHistory.push({ role: 'user', content: text });
+  let fullPrompt = text;
+  if (attached && attached.ocrText) {
+    fullPrompt += `\n\n[DỮ LIỆU TỪ ẢNH CHỤP MÀN HÌNH MÀ NGƯỜI DÙNG VỪA GỬI]:\n${attached.ocrText}\n(Hãy phân tích lỗi hoặc thông tin trên ảnh chụp màn hình này để chẩn đoán và hướng dẫn / sửa code chi tiết cho người dùng)`;
+  }
+
+  // Clear preview sau khi gửi
+  clearAttachedImage();
+
+  copilotChatHistory.push({ role: 'user', content: fullPrompt });
   const msgId = 'msg-' + Date.now();
   appendCopilotLoading(msgId);
 
   // Thu thập ngữ cảnh toàn diện:
-  // 1. Evidence / Báo cáo phân tích của dự án
   let contextPayload = currentEvidenceRaw ? currentEvidenceRaw.slice(0, 3000) : '';
 
-  // 2. Nội dung tệp đang mở trên editor (nếu có)
+  // Nội dung tệp đang mở trên editor (nếu có)
   const activeTab = editorTabs.get(activeTabKey);
   if (activeTab && !activeTab.isSystem && monacoEditor) {
     const code = monacoEditor.getValue();
@@ -1336,13 +1445,100 @@ function escapeHtml(str) {
     .replace(/'/g, '&#39;');
 }
 
+// KHO LƯU TRỮ CÁC BLOCK CODE ĐƯỢC AI TẠO RA ĐỂ ÁP DỤNG TRỰC TIẾP
+window.aiCodeStore = window.aiCodeStore || {};
+
+async function applyAiCodeFromStore(blockKey) {
+  const item = window.aiCodeStore?.[blockKey];
+  if (!item) {
+    alert('Không tìm thấy thông tin code block!');
+    return;
+  }
+  const btn = document.getElementById(`btn-apply-${blockKey}`);
+  const originalHtml = btn ? btn.innerHTML : '';
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<span>⏳ Đang áp dụng...</span>';
+  }
+
+  try {
+    const res = await fetch('/api/agent/apply-code', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        filePath: item.filePath,
+        code: item.code
+      })
+    });
+    const data = await res.json();
+    if (data.success) {
+      if (btn) {
+        btn.innerHTML = '<span>✅ Đã Áp Dụng!</span>';
+        btn.style.background = '#238636';
+      }
+      showToast(`⚡ Đã tự động cập nhật ${data.relativePath}!`);
+
+      // Nếu file này đang mở trong Monaco Editor thì cập nhật nội dung tức thì
+      for (const [key, tab] of editorTabs.entries()) {
+        if (tab.filePath && (tab.filePath === data.fullPath || tab.filePath.replace(/\\/g, '/').endsWith(data.relativePath.replace(/\\/g, '/')))) {
+          tab.content = item.code;
+          tab.savedContent = item.code;
+          tab.isDirty = false;
+          if (activeTabKey === key && monacoEditor) {
+            monacoEditor.setValue(item.code);
+          }
+          renderEditorTabs();
+          break;
+        }
+      }
+
+      const asarMsg = data.asarSynced ? '\n📦 Đã tự động cập nhật đồng bộ trực tiếp vào file app.asar!' : '';
+      alert(`🎉 [THÀNH CÔNG] ĐÃ ÁP DỤNG CODE THÀNH CÔNG!\n\n📄 File: ${data.relativePath}${asarMsg}\n\nBạn có thể chạy thử phần mềm hoặc tiếp tục chỉnh sửa.`);
+    } else {
+      if (btn) btn.innerHTML = originalHtml;
+      alert(`❌ Lỗi khi áp dụng code: ${data.error}`);
+    }
+  } catch (err) {
+    if (btn) btn.innerHTML = originalHtml;
+    alert(`❌ Lỗi kết nối: ${err.message}`);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
 function formatMarkdown(md) {
   if (!md) return '';
 
   const codeBlocks = [];
   let processed = md.replace(/```([a-zA-Z0-9_-]*)\n([\s\S]*?)```/g, (match, lang, code) => {
     const id = `__CODE_BLOCK_${codeBlocks.length}__`;
-    codeBlocks.push(`<pre class="code-block-snippet" style="background:#090d13;border:1px solid #30363d;border-radius:6px;padding:8px 10px;margin:8px 0;overflow-x:auto;"><div style="font-size:0.65rem;color:#8b949e;text-transform:uppercase;margin-bottom:4px;font-family:monospace;">${escapeHtml(lang || 'code')}</div><code style="font-family:monospace;font-size:0.8rem;color:#7ee787;">${escapeHtml(code.trim())}</code></pre>`);
+    const trimmedCode = code.trim();
+
+    // Nhận diện annotation mục tiêu của AI Coding Agent: // [FILE: <path>] hoặc # [FILE: <path>]
+    const fileMatch = trimmedCode.match(/^\s*(?:\/\/|#|\/\*)\s*\[FILE:\s*([^\s\]]+)\]/i);
+    let headerHtml = '';
+    let hasHeader = '';
+
+    if (fileMatch) {
+      const targetPath = fileMatch[1];
+      const blockKey = 'cb_' + Math.random().toString(36).slice(2, 9);
+      window.aiCodeStore[blockKey] = {
+        filePath: targetPath,
+        code: trimmedCode
+      };
+
+      headerHtml = `
+        <div class="code-agent-header">
+          <div class="target-path-badge">📄 <span>${escapeHtml(targetPath)}</span></div>
+          <button class="btn-apply-code" id="btn-apply-${blockKey}" onclick="applyAiCodeFromStore('${blockKey}')" title="Tự động ghi code này vào file và build lại ASAR">
+            <span>⚡ Áp Dụng Vào File</span>
+          </button>
+        </div>
+      `;
+      hasHeader = ' has-agent-header';
+    }
+
+    codeBlocks.push(`${headerHtml}<pre class="code-block-snippet${hasHeader}" style="background:#090d13;border:1px solid #30363d;border-radius:6px;padding:8px 10px;margin:8px 0;overflow-x:auto;"><div style="font-size:0.65rem;color:#8b949e;text-transform:uppercase;margin-bottom:4px;font-family:monospace;">${escapeHtml(lang || 'code')}</div><code style="font-family:monospace;font-size:0.8rem;color:#7ee787;">${escapeHtml(trimmedCode)}</code></pre>`);
     return id;
   });
 
@@ -1450,13 +1646,22 @@ function toggleThought(id) {
   }
 }
 
-function appendCopilotMessage(role, content) {
+function appendCopilotMessage(role, content, imgUrl = null) {
   const box = document.getElementById('copilot-chat-box');
   const div = document.createElement('div');
   div.className = `c-msg c-msg-${role}`;
+  
+  let imgHtml = '';
+  if (imgUrl) {
+    imgHtml = `<div class="c-msg-image"><img src="${imgUrl}" alt="Ảnh người dùng gửi" /></div>`;
+  }
+
   div.innerHTML = `
     <div class="c-msg-avatar">${role === 'user' ? '👤' : '🤖'}</div>
-    <div class="c-msg-bubble">${formatMarkdown(content)}</div>
+    <div class="c-msg-bubble">
+      ${imgHtml}
+      <div>${formatMarkdown(content)}</div>
+    </div>
   `;
   box.appendChild(div);
   scrollCopilotBottom();
@@ -1615,12 +1820,12 @@ if not os.path.exists(MODEL_PATH):
     if os.path.exists(file_path) and file_path != MODEL_PATH:
         os.rename(file_path, MODEL_PATH)
 
-# BƯỚC 4: Nạp model vào Ollama với GPU Tesla T4 (Tối ưu VRAM 13.5GB / 15.0GB)
+# BƯỚC 4: Nạp model vào Ollama với GPU Tesla T4 (Tối ưu VRAM ~14.0GB / 15.0GB)
 print("--> [3/4] Đang nạp Model vào GPU T4 với Ollama...")
 with open("Modelfile", "w") as f:
     f.write(f"""FROM {MODEL_PATH}
 PARAMETER temperature 0.6
-PARAMETER num_ctx 24576
+PARAMETER num_ctx 32768
 PARAMETER num_batch 512
 """)
 !ollama create deepseek-r1-distill-qwen-14b -f Modelfile

@@ -10,6 +10,8 @@
   <link rel="stylesheet" href="style.css">
   <!-- MONACO EDITOR (VS CODE & DNSPY CORE) -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.min.js"></script>
+  <!-- TESSERACT.JS OCR FOR SCREENSHOT & ERROR IMAGE UNDERSTANDING -->
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 </head>
 <body>
   <div class="studio-wrapper">
@@ -209,9 +211,13 @@
         <div class="panel-header">
           <div class="copilot-title">
             <span class="ai-sparkle">🧠</span>
-            <span>DEEPSEEK-R1 COPILOT</span>
+            <span>DEEPSEEK-R1 AGENT</span>
           </div>
           <div style="display:flex; align-items:center; gap:6px;">
+            <label class="agent-mode-badge" title="Chế độ Agent: AI phân tích sâu và cho phép áp dụng code đã sửa trực tiếp vào file">
+              <input type="checkbox" id="chk-agent-mode" checked style="accent-color:#3fb950; cursor:pointer;">
+              <span>⚡ AGENT</span>
+            </label>
             <span class="model-badge">14B (T4 GPU)</span>
             <button onclick="toggleCopilotPanel()" title="Thu gọn panel Chatbot" style="background:none; border:none; color:var(--text-dim); cursor:pointer; font-size:13px; padding:2px 5px; border-radius:3px;">✕</button>
           </div>
@@ -220,28 +226,43 @@
         <div class="copilot-quick-bar">
           <button class="quick-chip" onclick="askAiQuick('Hãy tóm tắt luồng hoạt động chính và kiến trúc của file này.')">🔍 Kiến trúc</button>
           <button class="quick-chip" onclick="askAiQuick('Tìm toàn bộ chuỗi nhạy cảm, API Keys, URLs hoặc cơ chế kiểm tra License.')">🔑 API &amp; Key</button>
-          <button class="quick-chip" onclick="askAiQuick('Tái tạo lại logic thuật toán này sang mã nguồn Python hoàn chỉnh có chú thích tiếng Việt.')">🐍 Tái tạo Python</button>
+          <button class="quick-chip" onclick="askAiQuick('Hãy tìm và sửa code bỏ qua kiểm tra bản quyền (bypass license) trong file này.')">⚡ Sửa Code Bypass</button>
         </div>
 
         <div class="copilot-chat" id="copilot-chat-box">
           <div class="c-msg c-msg-ai">
             <div class="c-msg-avatar">🤖</div>
             <div class="c-msg-bubble">
-              <p>Chào bạn! Tôi là <b>DeepSeek-R1-14B</b> chạy trên Google Colab GPU.</p>
-              <p>Khi bạn bấm <b>Dịch Ngược</b>, toàn bộ mã nguồn sẽ tự động bung ra ổ đĩa máy tính, và tôi sẽ phân tích các hàm quan trọng để bạn hiểu toàn bộ logic!</p>
+              <p>Chào bạn! Tôi là <b>DeepSeek-R1 AI Coding Agent</b>.</p>
+              <p>Tôi có thể giúp bạn <b>tìm kiếm code trong dự án</b>, <b>phân tích thuật toán</b>, <b>nhận diện ảnh chụp màn hình lỗi (Ctrl+V)</b> và <b>tự động tạo nút Áp Dụng Code</b> trực tiếp vào file!</p>
             </div>
           </div>
         </div>
 
         <div class="copilot-input-area">
-          <textarea id="copilot-user-input" placeholder="Hỏi AI về mã nguồn, yêu cầu giải thích hàm, viết lại code..." rows="2"></textarea>
-          <button class="btn btn-primary" id="btn-send-copilot" onclick="sendCopilotMessage()">
-            <span>Gửi</span>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <line x1="22" y1="2" x2="11" y2="13"></line>
-              <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-            </svg>
-          </button>
+          <div id="chat-image-preview-bar" class="chat-img-preview-bar hidden">
+            <div class="img-preview-thumb-box">
+              <img id="chat-img-preview" src="" alt="Thumbnail" />
+              <button class="btn-remove-thumb" onclick="clearAttachedImage()" title="Xóa ảnh">×</button>
+            </div>
+            <div class="img-ocr-status" id="img-ocr-status">
+              <span class="ocr-dot"></span> <span id="img-ocr-text">Đang nhận diện chữ &amp; lỗi từ ảnh...</span>
+            </div>
+          </div>
+          <div class="copilot-input-controls">
+            <button class="btn-attach-img" id="btn-attach-img" onclick="triggerImagePicker()" title="Đính kèm ảnh lỗi/giao diện (hoặc bấm Ctrl+V để dán ảnh)">
+              📷
+            </button>
+            <input type="file" id="chat-file-input" accept="image/*" class="hidden" onchange="handleImagePicked(event)" />
+            <textarea id="copilot-user-input" placeholder="Hỏi AI, yêu cầu sửa code, hoặc dán ảnh chụp màn hình (Ctrl+V)..." rows="2"></textarea>
+            <button class="btn btn-primary" id="btn-send-copilot" onclick="sendCopilotMessage()">
+              <span>Gửi</span>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="22" y1="2" x2="11" y2="13"></line>
+                <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+              </svg>
+            </button>
+          </div>
         </div>
       </aside>
     </div>
