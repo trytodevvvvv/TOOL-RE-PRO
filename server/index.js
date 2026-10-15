@@ -500,8 +500,15 @@ app.post('/api/project/auto-decompile', async (req, res) => {
         primaryOutputText = await runReaRecover();
         fs.writeFileSync(path.join(targetOutputDir, 'electron_analysis_evidence.json'), primaryOutputText, 'utf8');
 
+      } else if (pythonDecompiler.isPythonProject(targetPath)) {
+        // DỰ ÁN PYTHON NATIVE / CYTHON (.PYD / .PY / REQUIREMENTS.TXT / RUN.BAT)
+        console.log(`[DECOMPILE] 🐍 PHÁT HIỆN DỰ ÁN PYTHON NATIVE / CYTHON! Tiến hành bung mã nguồn và bóc tách nhị phân...`);
+        const pyResult = await pythonDecompiler.analyzeCythonAndPythonProject(targetPath, targetOutputDir);
+        fileType = pyResult.fileType;
+        mainScriptPath = pyResult.mainScriptPath;
+        primaryOutputText = pyResult.primaryOutputText;
       } else {
-        // DỰ ÁN ELECTRON THƯỜNG / JAVASCRIPT / PYTHON CƠ BẢN
+        // DỰ ÁN ELECTRON THƯỜNG / JAVASCRIPT
         if (foundAsars.length > 0) {
           for (const asarPath of foundAsars) {
             console.log(`[DECOMPILE] Đang bung archive mã nguồn: ${asarPath}`);
@@ -708,7 +715,16 @@ ${(decRes.disasm || '').slice(0, 5000)}
       pythonDecompiler.generatePythonRunnerScripts(targetOutputDir, path.basename(targetPath));
       primaryOutputText = fs.readFileSync(targetPath, 'utf8');
     }
-    // TRƯỜNG HỢP 7: Các tệp nhị phân khác (DLL, SO, BIN, APK, ...)
+    // TRƯỜNG HỢP 7: Tệp C-Extension Python nhị phân (.pyd / Cython)
+    else if (ext === '.pyd') {
+      fileType = 'Python C-Extension (.pyd / Cython Binary)';
+      const targetPyd = path.join(targetOutputDir, path.basename(targetPath));
+      fs.copyFileSync(targetPath, targetPyd);
+      const pydAnalysis = pythonDecompiler.scanPydFiles(targetOutputDir);
+      primaryOutputText = `[THÀNH CÔNG] ĐÃ PHÂN TÍCH TỆP CYTHON C-EXTENSION (.PYD):\n${JSON.stringify(pydAnalysis, null, 2)}`;
+      fs.writeFileSync(path.join(targetOutputDir, 'pyd_analysis.json'), primaryOutputText, 'utf8');
+    }
+    // TRƯỜNG HỢP 8: Các tệp nhị phân khác (DLL, SO, BIN, APK, ...)
     else {
       fileType = `Binary / Data (${ext.toUpperCase() || 'Unknown'})`;
       const runReaStrings = () => new Promise((resolve) => {
@@ -1268,17 +1284,18 @@ app.post('/api/chat', async (req, res) => {
 
   let systemPrompt = `Bạn là Trợ lý Dịch Ngược & Kỹ sư Lập trình Cấp cao (Autonomous Reverse Engineering Agent) trong REA Studio.
 Nhiệm vụ của bạn:
-1. Phân tích cấu trúc và logic từ tệp nhị phân, JavaScript, Electron, Python hoặc Assembly vừa được bung ra.
-2. Tìm kiếm các thuật toán mã hóa, chuỗi bí mật, logic kiểm tra bản quyền / API / License.
-3. Khi bạn muốn sửa code hoặc tạo file mới trong dự án, bạn PHẢI luôn đặt đường dẫn file ở DÒNG ĐẦU TIÊN của khối code với cú pháp:
-\`\`\`javascript
-// [FILE: đường_dẫn_tệp]
+1. Phân tích cấu trúc và logic từ tệp nhị phân, JavaScript, Electron, Python (bao gồm Cython C-Extension .pyd) hoặc Assembly vừa được bung ra.
+2. Tìm kiếm các thuật toán mã hóa, chuỗi bí mật, logic kiểm tra bản quyền / API / License (như AuthScreen, boot, machineid, cryptography).
+3. ĐỐI VỚI DỰ ÁN PYTHON NATIVE / CYTHON (.pyd): Do các file .pyd là mã máy C nhị phân, giải pháp tối ưu nhất là sử dụng kỹ thuật "Dynamic Monkey-Patching" ngay trong file khởi chạy \`main.py\` để hook/ghi đè các lớp như AuthScreen hoặc hàm boot/xác thực nhằm bỏ qua kiểm tra bản quyền và chuyển thẳng vào giao diện MainApp.
+4. Khi bạn muốn sửa code hoặc tạo file mới trong dự án, bạn PHẢI luôn đặt đường dẫn file ở DÒNG ĐẦU TIÊN của khối code với cú pháp:
+\`\`\`javascript hoặc \`\`\`python
+// [FILE: đường_dẫn_tệp] hoặc # [FILE: đường_dẫn_tệp]
 ... nội dung mã nguồn hoàn chỉnh hoặc đoạn code đã vá ...
 \`\`\`
 Ví dụ:
-\`\`\`javascript
-// [FILE: dist/main.js]
-// Đã bypass kiểm tra bản quyền
+\`\`\`python
+# [FILE: main.py]
+# Đoạn code Monkey-Patching bypass license
 ...
 \`\`\`
 Hệ thống REA Studio sẽ tự động tạo nút "⚡ ÁP DỤNG VÀO FILE" để người dùng áp dụng code thẳng vào ổ đĩa và tự động đồng bộ vào ứng dụng!`;
