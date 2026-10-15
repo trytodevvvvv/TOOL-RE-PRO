@@ -416,23 +416,34 @@ async function analyzeCythonAndPythonProject(projectDir, outputDir) {
     requirementsContent = fs.readFileSync(reqPath, 'utf8');
   }
 
-  // 5. Kiểm tra venv gốc để tạo RUN_APP.bat chạy ngay lập tức với đầy đủ thư viện
-  const originalVenvActivate = path.join(projectDir, 'venv', 'Scripts', 'activate.bat');
-  const hasOriginalVenv = fs.existsSync(originalVenvActivate);
+  // 4.1 TỰ ĐỘNG TẠO JUNCTION LINK CHO VENV (0 MB dung lượng, kết nối trực tiếp trong 0.1s)
+  const originalVenv = path.join(projectDir, 'venv');
+  const targetVenv = path.join(outputDir, 'venv');
+  if (fs.existsSync(originalVenv) && !fs.existsSync(targetVenv)) {
+    try {
+      execSync(`cmd.exe /c mklink /J "${targetVenv}" "${originalVenv}"`, { windowsHide: true });
+      console.log(`[VENV JUNCTION] 🔗 Đã tạo Junction Link venv siêu tốc: ${targetVenv} -> ${originalVenv}`);
+    } catch (juncErr) {
+      console.warn('[VENV JUNCTION] Không thể tạo junction venv:', juncErr.message);
+    }
+  }
 
+  // 5. Tạo RUN_APP.bat chạy ngay lập tức với môi trường venv
   const mainRelName = path.basename(mainPyPath);
   const runBatContent = `@echo off\r
 title REA Studio - Running Decompiled Python App\r
 color 0a\r
 echo ================================================================\r
 echo   DANG KHOI CHAY UNG DUNG PYTHON TRUC TIEP TU MA NGUON VUA BUNG...\r
-echo   (Moi thay doi trong ${mainRelName} deu co hieu luc ngay lap tuc!)\r
+echo   File chay chinh: ${mainRelName}\r
 echo ================================================================\r
 cd /d "%~dp0"\r
-${hasOriginalVenv ? `if exist "${originalVenvActivate}" (\r
-    echo [OK] Dang su dung moi truong venv goc: ${path.join(projectDir, 'venv')}\r
-    call "${originalVenvActivate}"\r
-)\r\n` : ''}python "${mainRelName}"\r
+if exist "venv\\Scripts\\activate.bat" (\r
+    call "venv\\Scripts\\activate.bat"\r
+) else if exist "${path.join(projectDir, 'venv', 'Scripts', 'activate.bat')}" (\r
+    call "${path.join(projectDir, 'venv', 'Scripts', 'activate.bat')}"\r
+)\r
+python "${mainRelName}"\r
 pause\r
 `;
   fs.writeFileSync(path.join(outputDir, 'RUN_APP.bat'), runBatContent, 'utf8');
@@ -504,10 +515,12 @@ echo   KHOI CHAY UNG DUNG PYTHON KEM BO HOOK NOI SUY DONG (HOOK ENGINE)\r
 echo   File chay chinh: ${mainRelName}\r
 echo ================================================================\r
 cd /d "%~dp0"\r
-${hasOriginalVenv ? `if exist "${originalVenvActivate}" (\r
-    echo [OK] Dang su dung moi truong venv goc: ${path.join(projectDir, 'venv')}\r
-    call "${originalVenvActivate}"\r
-)\r\n` : ''}python "${mainRelName}"\r
+if exist "venv\\Scripts\\activate.bat" (\r
+    call "venv\\Scripts\\activate.bat"\r
+) else if exist "${path.join(projectDir, 'venv', 'Scripts', 'activate.bat')}" (\r
+    call "${path.join(projectDir, 'venv', 'Scripts', 'activate.bat')}"\r
+)\r
+python "${mainRelName}"\r
 pause\r
 `;
   fs.writeFileSync(path.join(outputDir, 'RUN_WITH_HOOK.bat'), runHookBatContent, 'utf8');

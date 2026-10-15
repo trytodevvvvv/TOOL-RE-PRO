@@ -1254,8 +1254,26 @@ app.post('/api/agent/apply-code', async (req, res) => {
       fs.mkdirSync(parent, { recursive: true });
     }
 
+    // AUTO-HEALING VALIDATOR CHO FILE PYTHON (Đặc biệt là main.py)
+    let finalContent = content;
+    const isPyFile = resolvedPath.toLowerCase().endsWith('.py');
+    if (isPyFile) {
+      if (finalContent.includes('run()') && !finalContent.includes('modules.app_runner') && !finalContent.includes('import run')) {
+        console.log('[AUTO-HEALING] Phát hiện thiếu import run(), tự động bổ sung!');
+        finalContent = 'from modules.app_runner import run\n' + finalContent;
+      }
+      if (finalContent.includes('sys.exit') && !finalContent.includes('import sys')) {
+        console.log('[AUTO-HEALING] Phát hiện thiếu import sys, tự động bổ sung!');
+        finalContent = 'import sys\n' + finalContent;
+      }
+      if (finalContent.includes('AuthScreen') && !finalContent.includes('modules.app')) {
+        console.log('[AUTO-HEALING] Phát hiện thiếu import AuthScreen, tự động bổ sung!');
+        finalContent = 'from modules.app import AuthScreen\n' + finalContent;
+      }
+    }
+
     // GHI ĐÈ VÀ LƯU THẲNG XUỐNG Ổ CỨNG
-    fs.writeFileSync(resolvedPath, content, 'utf8');
+    fs.writeFileSync(resolvedPath, finalContent, 'utf8');
     console.log(`[AGENT] Đã lưu code tự động vĩnh viễn vào file: ${resolvedPath}`);
 
     // Tự động đồng bộ Live App nếu nằm trong resources/app
@@ -1278,7 +1296,8 @@ app.post('/api/agent/apply-code', async (req, res) => {
       success: true,
       fullPath: resolvedPath,
       relativePath: relFile,
-      size: Buffer.byteLength(content, 'utf8'),
+      content: finalContent,
+      size: Buffer.byteLength(finalContent, 'utf8'),
       syncedAsar
     });
   } catch (err) {
@@ -1302,19 +1321,50 @@ app.post('/api/chat', async (req, res) => {
 Nhiệm vụ của bạn:
 1. Phân tích cấu trúc và logic từ tệp nhị phân, JavaScript, Electron, Python (bao gồm Cython C-Extension .pyd) hoặc Assembly vừa được bung ra.
 2. Tìm kiếm các thuật toán mã hóa, chuỗi bí mật, logic kiểm tra bản quyền / API / License (như AuthScreen, boot, machineid, cryptography).
-3. ĐỐI VỚI DỰ ÁN PYTHON NATIVE / CYTHON (.pyd): Do các file .pyd là mã máy C nhị phân, giải pháp tối ưu nhất là sử dụng kỹ thuật "Dynamic Monkey-Patching" ngay trong file khởi chạy \`main.py\` để hook/ghi đè các lớp như AuthScreen hoặc hàm boot/xác thực nhằm bỏ qua kiểm tra bản quyền và chuyển thẳng vào giao diện MainApp.
-4. Khi bạn muốn sửa code hoặc tạo file mới trong dự án, bạn PHẢI luôn đặt đường dẫn file ở DÒNG ĐẦU TIÊN của khối code với cú pháp:
-\`\`\`javascript hoặc \`\`\`python
-// [FILE: đường_dẫn_tệp] hoặc # [FILE: đường_dẫn_tệp]
-... nội dung mã nguồn hoàn chỉnh hoặc đoạn code đã vá ...
-\`\`\`
-Ví dụ:
+3. ĐỐI VỚI CÂU HỎI NGẮN / PROMPT ĐƠN GIẢN CỦA NGƯỜI DÙNG:
+   - Kể cả khi người dùng chỉ hỏi ngắn gọn như: "viết hook code", "bỏ qua đăng nhập", "bypass login", "bỏ qua license":
+   - Bạn PHẢI tự động hiểu rằng người dùng muốn bạn sinh mã nguồn HOÀN CHỈNH, CHẠY ĐƯỢC NGAY 100% cho file khởi chạy chính (thường là \`main.py\` hoặc \`dist/main.js\`).
+4. QUY TẮC BẤT BIẾN KHI SINH MÃ CHO PYTHON / CYTHON (Đặc biệt là main.py):
+   - Bạn BẮT BUỘC PHẢI BẢO TOÀN toàn bộ các câu lệnh import gốc và luồng khởi chạy gốc của file!
+   - Tuyệt đối không được bỏ quên:
+     \`from modules.app_runner import run\`
+     \`import sys\`
+     \`sys.exit(run())\`
+   - Khung code chuẩn mẫu khi can thiệp AuthScreen:
 \`\`\`python
 # [FILE: main.py]
-# Đoạn code Monkey-Patching bypass license
-...
+import sys
+from modules.app_runner import run
+from modules.app import AuthScreen
+
+class MonkeyPatcher:
+    @staticmethod
+    def patch_auth_screen():
+        original_init = AuthScreen.__init__
+        def new_init(self, *args, **kwargs):
+            if hasattr(original_init, '__call__'):
+                try: original_init(self, *args, **kwargs)
+                except Exception: pass
+            self.bypassed_activation = True
+        AuthScreen.__init__ = new_init
+
+        # Hook hàm boot nếu có để kích hoạt giao diện chính ngay lập tức
+        if hasattr(AuthScreen, 'boot'):
+            AuthScreen.boot = lambda self, *args, **kwargs: print("[HOOK] Đã kích hoạt AuthScreen thành công!")
+
+if __name__ == "__main__":
+    # Kích hoạt hook trước khi khởi chạy
+    MonkeyPatcher.patch_auth_screen()
+    # Khởi chạy luồng chính gốc của phần mềm
+    sys.exit(run())
 \`\`\`
-Hệ thống REA Studio sẽ tự động tạo nút "⚡ ÁP DỤNG VÀO FILE" để người dùng áp dụng code thẳng vào ổ đĩa và tự động đồng bộ vào ứng dụng!`;
+5. QUY TẮC ĐỊNH DẠNG CODE AGENT:
+   - Luôn đặt thẻ đường dẫn file ở DÒNG ĐẦU TIÊN của khối code:
+     \`\`\`python
+     # [FILE: main.py]
+     ...
+     \`\`\`
+   - REA Studio sẽ tự động tạo nút "⚡ ÁP DỤNG VÀO FILE" để người dùng lưu thẳng vào ổ cứng và cập nhật lên editor.`;
 
   if (projectInfo) {
     systemPrompt += `\n\n[DỰ ÁN ĐANG MỞ]: ${projectInfo.name || 'Project'} (${projectInfo.path || ''})\n[DANH SÁCH FILE CHÍNH]: ${projectInfo.files || 'dist/main.js, package.json'}`;
